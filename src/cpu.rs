@@ -28,7 +28,15 @@ impl Cpu {
     pub fn exec_instruction(&mut self) -> usize {
         let opcode = self.read_u8(self.r_pc);
 
-        todo!()
+        match opcode {
+
+            _ => self.invalid_opcode(opcode)
+        }
+    }
+
+    fn invalid_opcode(&self, opcode: u8) -> usize {
+        eprintln!("Invalid CPU opcode! Read Opcode: 0x{:X}", opcode);
+        0
     }
 
     fn read_u8(&self, addr: u16) -> u8 {
