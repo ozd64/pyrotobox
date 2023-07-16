@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use crate::nes::Nes;
 
 mod bin_ops;
+mod cpu;
+mod mapper;
 mod nes;
 
 const MISSING_NES_ROM_FILE_PATH_ERROR_CODE: i32 = -1;
@@ -32,7 +34,7 @@ fn main() {
         }
     };
 
-    let _ = match Nes::new(rom_bin) {
+    let mut nes = match Nes::new(rom_bin) {
         Ok(n) => n,
         Err(err) => {
             eprintln!(
@@ -42,6 +44,8 @@ fn main() {
             std::process::exit(NES_VIRTUAL_PLATFORM_ERROR_CODE);
         }
     };
+
+    nes.run();
 }
 
 fn read_bin<P>(file_path: P) -> Result<Vec<u8>, Error>

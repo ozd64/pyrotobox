@@ -2,6 +2,8 @@ use std::error::Error;
 use std::fmt::Display;
 
 use crate::bin_ops::read_le_u32;
+use crate::cpu::Cpu;
+use crate::mapper::{get_mem_map_by_mapper, Cartridge};
 
 const INES_HEADER_SIGNATURE: u32 = 0x1A53454E;
 const MIN_NES_ROM_FILE_SIZE_IN_BYTES: usize = 0x10;
@@ -17,7 +19,7 @@ pub enum Mapper {
     NROM,
 }
 
-struct NesHeader {
+pub struct NesHeader {
     mapper: Mapper,
     mirroring: Mirroring,
     prg_rom_size: usize,
@@ -93,21 +95,30 @@ impl NesHeader {
             battery_backed_prg_ram,
         })
     }
+
+    pub fn prg_rom_size(&self) -> usize {
+        self.prg_rom_size
+    }
 }
 
 pub struct Nes {
-    nes_header: NesHeader,
     rom_bin: Vec<u8>,
+    cpu: Cpu,
 }
 
 impl Nes {
     pub fn new(rom_bin: Vec<u8>) -> Result<Self, NesError> {
         let nes_header = NesHeader::new(&rom_bin)?;
+        let cartridge = get_mem_map_by_mapper(&nes_header.mapper);
 
-        Ok(Self {
-            nes_header,
-            rom_bin,
-        })
+        let cpu_mem_map = cartridge.get_cpu_mem_map(&nes_header, &rom_bin);
+        let cpu = Cpu::new(cpu_mem_map);
+
+        Ok(Self { rom_bin, cpu })
+    }
+
+    pub fn run(&mut self) {
+        let _ = self.cpu.exec_instruction();
     }
 }
 
