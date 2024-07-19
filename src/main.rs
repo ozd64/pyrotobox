@@ -1,11 +1,10 @@
-mod file_io;
-
 use std::env::args;
 use std::path::PathBuf;
 
-use file_io::get_rom_file_content;
+use pyrotobox::rom::Rom;
 
 const ROM_FILE_NOT_PROVIDED_ERROR_CODE: i32 = -1;
+const UNABLE_PARSE_NES_ROM_FILE: i32 = -2;
 
 fn main() {
     let rom_file_path = args()
@@ -17,9 +16,21 @@ fn main() {
             std::process::exit(ROM_FILE_NOT_PROVIDED_ERROR_CODE);
         });
 
-    let rom_bytes = get_rom_file_content(rom_file_path).unwrap();
+    println!("----- pyrotobox v0.1.0 BETA -----");
+    println!("ROM File Path: {:?}", rom_file_path);
 
-    println!("First Byte: {:X}", &rom_bytes[0]);
+    let rom = match Rom::from_ines(rom_file_path) {
+        Ok(nes_rom) => nes_rom,
+        Err(err) => {
+            eprintln!("An error occurred while parsing the NES ROM file.\n{}", err);
+            std::process::exit(UNABLE_PARSE_NES_ROM_FILE)
+        }
+    };
+
+    println!("PRG ROM Size: {}", rom.prg_rom_size());
+    println!("CHR ROM Size: {}", rom.chr_rom_size());
+    println!("Mapper: {}", rom.mapper());
+    println!("Mirroring: {}", rom.mirroring());
 }
 
 fn print_help() {
