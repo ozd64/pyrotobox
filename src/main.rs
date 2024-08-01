@@ -1,10 +1,10 @@
 use std::env::args;
 use std::path::PathBuf;
 
-use pyrotobox::rom::Rom;
+use pyrotobox::nes::Nes;
 
 const ROM_FILE_NOT_PROVIDED_ERROR_CODE: i32 = -1;
-const UNABLE_PARSE_NES_ROM_FILE: i32 = -2;
+const NES_EMULATOR_BUILD_FAILED_ERROR_CODE: i32 = -2;
 
 fn main() {
     let rom_file_path = args()
@@ -19,18 +19,18 @@ fn main() {
     println!("----- pyrotobox v0.1.0 BETA -----");
     println!("ROM File Path: {:?}", rom_file_path);
 
-    let rom = match Rom::from_ines(rom_file_path) {
-        Ok(nes_rom) => nes_rom,
+    let nes = match Nes::new(rom_file_path) {
+        Ok(nes_instance) => nes_instance,
         Err(err) => {
-            eprintln!("An error occurred while parsing the NES ROM file.\n{}", err);
-            std::process::exit(UNABLE_PARSE_NES_ROM_FILE)
+            eprintln!(
+                "An error occurred while building the NES emulator.\n{}",
+                err
+            );
+            std::process::exit(NES_EMULATOR_BUILD_FAILED_ERROR_CODE);
         }
     };
 
-    println!("PRG ROM Size: {}", rom.prg_rom_size());
-    println!("CHR ROM Size: {}", rom.chr_rom_size());
-    println!("Mapper: {}", rom.mapper());
-    println!("Mirroring: {}", rom.mirroring());
+    nes.start();
 }
 
 fn print_help() {

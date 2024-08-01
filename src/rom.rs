@@ -78,6 +78,7 @@ pub struct Rom {
     prg_rom_size: usize,
     chr_rom_size: usize,
     battery_backed_prg_ram: bool,
+    rom_trainer_exists: bool,
     mirroring: Mirroring,
 }
 
@@ -87,7 +88,7 @@ impl Rom {
         Rom::from_rom_bin(rom_bin)
     }
 
-    fn from_rom_bin(rom_bin: Vec<u8>) -> Result<Rom, RomError> {
+    pub fn from_rom_bin(rom_bin: Vec<u8>) -> Result<Rom, RomError> {
         let read_sign = LittleEndian::read_u32(&rom_bin[..4]);
 
         if read_sign != INES_SIGNATURE {
@@ -108,7 +109,8 @@ impl Rom {
         } else {
             Mirroring::Vertical
         };
-        let battery_backed_prg_ram = (rom_bin[6] & 0x00000010) > 1;
+        let battery_backed_prg_ram = (rom_bin[6] & 0b00000010) > 1;
+        let rom_trainer_exists = (rom_bin[6] & 0b00000100) > 1;
 
         Ok(Self {
             rom_binary: rom_bin,
@@ -116,6 +118,7 @@ impl Rom {
             prg_rom_size,
             chr_rom_size,
             battery_backed_prg_ram,
+            rom_trainer_exists,
             mirroring,
         })
     }
@@ -162,6 +165,14 @@ impl Rom {
 
     pub fn mirroring(&self) -> Mirroring {
         self.mirroring
+    }
+
+    pub fn rom_binary(&self) -> &Vec<u8> {
+        &self.rom_binary
+    }
+
+    pub fn rom_trainer_exists(&self) -> bool {
+        self.rom_trainer_exists
     }
 }
 
@@ -223,5 +234,6 @@ mod tests {
         assert_eq!(1, rom.chr_rom_size());
         assert_eq!(Mirroring::Horizontal, rom.mirroring());
         assert!(!rom.battery_backed_prg_ram());
+        assert!(!rom.rom_trainer_exists());
     }
 }
