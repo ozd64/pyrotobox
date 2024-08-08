@@ -83,7 +83,20 @@ impl Cpu {
     }
 
     fn adc(&mut self, value: u8) {
-        todo!()
+        let mut new_acc_value = (self.r_a as u16).wrapping_add(value as u16);
+
+        if self.get_flag(CpuFlag::Carry) { 
+            new_acc_value = new_acc_value.wrapping_add(1);
+        }
+
+        let overflow = (!((self.r_a as u16) ^ (value as u16)) & ((self.r_a as u16) ^ new_acc_value)) & 0x0080;
+
+        self.set_flag(CpuFlag::Carry, new_acc_value > 255);
+        self.set_flag(CpuFlag::Zero, new_acc_value & 0xFF == 0x00);
+        self.set_flag(CpuFlag::Negative, new_acc_value & 0x80 > 0);
+        self.set_flag(CpuFlag::Overflow, overflow > 0);
+
+        self.r_a = (new_acc_value & 0x00FF) as u8;
     }
 
     #[inline]
@@ -322,13 +335,21 @@ mod tests {
 
     #[test]
     fn cpu_instruction_adc() {
-        let cpu_mem_map = generate_mem_map(&vec![0x69, 0x05]);
+        let cpu_mem_map = generate_mem_map(&vec![0x69, 150]);
         let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Carry, true);
+        cpu.r_a = 170;
 
         let cycles = cpu.exec_instruction();
 
         assert_eq!(cycles, 2);
-        assert_eq!(cpu.r_a, 0x05);
+
+        assert_eq!(cpu.r_a, 65);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Overflow), true);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
     }
 
     fn generate_mem_map(instructions: &[u8]) -> CpuMemMap {
@@ -346,4 +367,5 @@ mod tests {
 
         cpu_mem_map
     }
+
 }
