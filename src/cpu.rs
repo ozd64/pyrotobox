@@ -73,6 +73,7 @@ impl Cpu {
         match opcode {
             //ADC
             0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => self.adc(operand_value),
+            0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => self.and(operand_value),
             _ => panic!(
                 "FATAL: Unknown CPU instruction opcode. Read Opcode: 0x{:X} at the address 0x{:X}",
                 opcode, self.r_pc
@@ -97,6 +98,15 @@ impl Cpu {
         self.set_flag(CpuFlag::Overflow, overflow > 0);
 
         self.r_a = (new_acc_value & 0x00FF) as u8;
+    }
+
+    fn and(&mut self, value: u8) {
+        let result = self.r_a & value;
+
+        self.set_flag(CpuFlag::Zero, result == 0x00);
+        self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+
+        self.r_a = result;
     }
 
     #[inline]
@@ -310,6 +320,14 @@ impl Cpu {
         instructions[0x79] = CpuInstruction("ADC".to_string(), AddressingMode::AbsoluteY, 0x04);
         instructions[0x61] = CpuInstruction("ADC".to_string(), AddressingMode::IndirectX, 0x06);
         instructions[0x71] = CpuInstruction("ADC".to_string(), AddressingMode::IndirectY, 0x05);
+        instructions[0x29] = CpuInstruction("AND".to_string(), AddressingMode::Immediate, 0x02);
+        instructions[0x25] = CpuInstruction("AND".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0x35] = CpuInstruction("AND".to_string(), AddressingMode::ZeroPageX, 0x04);
+        instructions[0x2D] = CpuInstruction("AND".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0x3D] = CpuInstruction("AND".to_string(), AddressingMode::AbsoluteX, 0x04);
+        instructions[0x39] = CpuInstruction("AND".to_string(), AddressingMode::AbsoluteY, 0x04);
+        instructions[0x21] = CpuInstruction("AND".to_string(), AddressingMode::IndirectX, 0x06);
+        instructions[0x31] = CpuInstruction("AND".to_string(), AddressingMode::IndirectY, 0x05);
     }
 }
 
@@ -350,6 +368,22 @@ mod tests {
         assert_eq!(cpu.get_flag(CpuFlag::Overflow), true);
         assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
         assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_and() {
+        let cpu_mem_map = generate_mem_map(&vec![0x29, 150]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 170;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_a, 0x82);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
     }
 
     fn generate_mem_map(instructions: &[u8]) -> CpuMemMap {
