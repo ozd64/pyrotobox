@@ -44,6 +44,24 @@ pub struct Cpu {
     instructions: Vec<CpuInstruction>,
 }
 
+pub struct OperandDetails {
+    address: u16,
+    value: u8,
+    cycles: u8,
+    addressing_mode: AddressingMode,
+}
+
+impl OperandDetails {
+    fn new(address: u16, value: u8, cycles: u8, addressing_mode: AddressingMode) -> Self {
+        Self {
+            address,
+            value,
+            cycles,
+            addressing_mode,
+        }
+    }
+}
+
 impl Cpu {
     pub fn new(cpu_mem_map: CpuMemMap) -> Self {
         let r_pc = Cpu::reset_vector(&cpu_mem_map);
@@ -68,29 +86,35 @@ impl Cpu {
     pub fn exec_instruction(&mut self) -> usize {
         let opcode = self.read_u8(self.r_pc);
 
-        let (operand_value, total_cycles, addr_mode) = self.get_operand_value(opcode);
+        let operand_details = self.get_operand_details(opcode);
 
         match opcode {
             //ADC
-            0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => self.adc(operand_value),
-            0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => self.and(operand_value),
+            0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
+                self.adc(operand_details.value)
+            }
+            0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
+                self.and(operand_details.value)
+            }
+            0x0A | 0x06 | 0x16 | 0x0E | 0x1E => self.asl(&operand_details),
             _ => panic!(
                 "FATAL: Unknown CPU instruction opcode. Read Opcode: 0x{:X} at the address 0x{:X}",
                 opcode, self.r_pc
             ),
         };
 
-        total_cycles as usize
+        operand_details.cycles as usize
     }
 
     fn adc(&mut self, value: u8) {
         let mut new_acc_value = (self.r_a as u16).wrapping_add(value as u16);
 
-        if self.get_flag(CpuFlag::Carry) { 
+        if self.get_flag(CpuFlag::Carry) {
             new_acc_value = new_acc_value.wrapping_add(1);
         }
 
-        let overflow = (!((self.r_a as u16) ^ (value as u16)) & ((self.r_a as u16) ^ new_acc_value)) & 0x0080;
+        let overflow =
+            (!((self.r_a as u16) ^ (value as u16)) & ((self.r_a as u16) ^ new_acc_value)) & 0x0080;
 
         self.set_flag(CpuFlag::Carry, new_acc_value > 255);
         self.set_flag(CpuFlag::Zero, new_acc_value & 0xFF == 0x00);
@@ -109,35 +133,58 @@ impl Cpu {
         self.r_a = result;
     }
 
+    fn asl(&mut self, operand_details: &OperandDetails) {
+        if let AddressingMode::Accumulator = operand_details.addressing_mode {
+            let old_a = self.r_a;
+            let carry_flag = (old_a >> 7) > 0;
+
+            self.r_a = old_a << 1;
+
+            self.set_flag(CpuFlag::Zero, self.r_a == 0);
+            self.set_flag(CpuFlag::Carry, carry_flag);
+            self.set_flag(CpuFlag::Negative, (self.r_a & 0x80) > 0);
+        } else {
+            let carry_flag = (operand_details.value >> 7) > 0;
+            let new_value = operand_details.value << 1;
+
+            self.write_u8(operand_details.address, new_value);
+
+            self.set_flag(CpuFlag::Zero, new_value == 0);
+            self.set_flag(CpuFlag::Carry, carry_flag);
+            self.set_flag(CpuFlag::Negative, (new_value & 0x80) > 0);
+        }
+    }
+
     #[inline]
     fn nop(&self) {
         ()
     }
 
-    fn get_operand_value(&mut self, opcode: u8) -> (u8, u8, AddressingMode) {
+    fn get_operand_details(&mut self, opcode: u8) -> OperandDetails {
         let instruction = &self.instructions[opcode as usize];
 
         match instruction.1 {
             AddressingMode::Implied => {
                 self.r_pc += 1;
-                (opcode, instruction.2, instruction.1)
+                OperandDetails::new(self.r_pc, opcode, instruction.2, instruction.1)
             }
             AddressingMode::Accumulator => {
                 self.r_pc += 1;
-                (self.r_a, instruction.2, instruction.1)
+                OperandDetails::new(self.r_pc, self.r_a, instruction.2, instruction.1)
             }
             AddressingMode::Immediate => {
-                let value = self.read_u8(self.r_pc + 1);
+                let addr = self.r_pc + 1;
+                let value = self.read_u8(addr);
                 self.r_pc += 2;
 
-                (value, instruction.2, instruction.1)
+                OperandDetails::new(addr, value, instruction.2, instruction.1)
             }
             AddressingMode::ZeroPage => {
-                let zero_page_addr = self.read_u8(self.r_pc + 1);
-                let value = self.read_u8(zero_page_addr as u16);
+                let zero_page_addr = self.read_u8(self.r_pc + 1) as u16;
+                let value = self.read_u8(zero_page_addr);
 
                 self.r_pc += 2;
-                (value, instruction.2, instruction.1)
+                OperandDetails::new(zero_page_addr, value, instruction.2, instruction.1)
             }
             AddressingMode::ZeroPageX => {
                 let zero_page_addr = self.read_u8(self.r_pc + 1) as u16;
@@ -147,7 +194,7 @@ impl Cpu {
 
                 self.r_pc += 2;
 
-                (value, instruction.2, instruction.1)
+                OperandDetails::new(zero_page_addr, value, instruction.2, instruction.1)
             }
             AddressingMode::ZeroPageY => {
                 let zero_page_addr = self.read_u8(self.r_pc + 1) as u16;
@@ -157,11 +204,30 @@ impl Cpu {
 
                 self.r_pc += 2;
 
-                (value, instruction.2, instruction.1)
+                OperandDetails::new(zero_page_addr, value, instruction.2, instruction.1)
             }
             AddressingMode::Relative => {
+                let val = self.read_u8(self.r_pc + 1);
+                let hl = (self.r_pc >> 8) as u8;
+
+                self.r_pc += 2;
+
+                let relative_address = ((self.r_pc as i32) - (val as i32)) as u16;
+                //
+                //If memory page changes then we need extra cycles
+                let extra_cycles = if (relative_address & 0xFF00) != ((hl as u16) << 8) {
+                    1
+                } else {
+                    0
+                };
+
                 // Relative mode is handled within branch instructions
-                (opcode, 0, instruction.1)
+                OperandDetails::new(
+                    relative_address,
+                    val,
+                    instruction.2 + extra_cycles,
+                    instruction.1,
+                )
             }
             AddressingMode::Absolute => {
                 let le_addr_arr = vec![self.read_u8(self.r_pc + 1), self.read_u8(self.r_pc + 2)];
@@ -171,7 +237,7 @@ impl Cpu {
 
                 self.r_pc += 3;
 
-                (value, instruction.2, instruction.1)
+                OperandDetails::new(addr, value, instruction.2, instruction.1)
             }
             AddressingMode::AbsoluteX => {
                 let low_bit = self.read_u8(self.r_pc + 1);
@@ -190,7 +256,7 @@ impl Cpu {
                 };
                 self.r_pc += 3;
 
-                (value, instruction.2 + extra_cycles, instruction.1)
+                OperandDetails::new(addr, value, instruction.2 + extra_cycles, instruction.1)
             }
             AddressingMode::AbsoluteY => {
                 let low_bit = self.read_u8(self.r_pc + 1);
@@ -209,11 +275,23 @@ impl Cpu {
                 };
                 self.r_pc += 3;
 
-                (value, instruction.2 + extra_cycles, instruction.1)
+                OperandDetails::new(addr, value, instruction.2 + extra_cycles, instruction.1)
             }
             AddressingMode::Indirect => {
+                let lsb = self.read_u8(self.r_pc + 1);
+                let msb = self.read_u8(self.r_pc + 2);
+
+                let lsb_addr = LittleEndian::read_u16(&vec![lsb, msb]);
+                let msb_addr = lsb_addr.wrapping_add(1);
+
+                let lsb = self.read_u8(lsb_addr);
+                let msb = self.read_u8(msb_addr);
+
+                let addr = LittleEndian::read_u16(&vec![lsb, msb]);
+
+                self.r_pc += 3;
                 //Indirect is implemented directly in JMP instruction
-                (opcode, 0, instruction.1)
+                OperandDetails::new(addr, opcode, 0, instruction.1)
             }
             AddressingMode::IndirectX => {
                 let base = self.read_u8(self.r_pc + 1);
@@ -228,7 +306,7 @@ impl Cpu {
 
                 self.r_pc += 2;
 
-                (value, instruction.2, instruction.1)
+                OperandDetails::new(addr, value, instruction.2, instruction.1)
             }
             AddressingMode::IndirectY => {
                 let base = self.read_u8(self.r_pc + 1);
@@ -248,7 +326,7 @@ impl Cpu {
 
                 self.r_pc += 2;
 
-                (value, instruction.2 + extra_cycles, instruction.1)
+                OperandDetails::new(addr, value, instruction.2 + extra_cycles, instruction.1)
             }
         }
     }
@@ -328,6 +406,11 @@ impl Cpu {
         instructions[0x39] = CpuInstruction("AND".to_string(), AddressingMode::AbsoluteY, 0x04);
         instructions[0x21] = CpuInstruction("AND".to_string(), AddressingMode::IndirectX, 0x06);
         instructions[0x31] = CpuInstruction("AND".to_string(), AddressingMode::IndirectY, 0x05);
+        instructions[0x0A] = CpuInstruction("ASL".to_string(), AddressingMode::Accumulator, 0x02);
+        instructions[0x06] = CpuInstruction("ASL".to_string(), AddressingMode::ZeroPage, 0x05);
+        instructions[0x16] = CpuInstruction("ASL".to_string(), AddressingMode::ZeroPageX, 0x06);
+        instructions[0x0E] = CpuInstruction("ASL".to_string(), AddressingMode::Absolute, 0x06);
+        instructions[0x1E] = CpuInstruction("ASL".to_string(), AddressingMode::AbsoluteX, 0x07);
     }
 }
 
@@ -386,6 +469,37 @@ mod tests {
         assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
     }
 
+    #[test]
+    fn cpu_instruction_asl() {
+        let cpu_mem_map = generate_mem_map(&vec![0x0A]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 0x05;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_a, 0x0A);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+
+        let cpu_mem_map = generate_mem_map(&vec![0x06, 0x00]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.write_u8(0x0000, 5);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 5);
+
+        assert_eq!(cpu.read_u8(0x0000), 0x0A);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
     fn generate_mem_map(instructions: &[u8]) -> CpuMemMap {
         let mut cpu_mem_map = vec![0x00; 0x10_000];
 
@@ -401,5 +515,4 @@ mod tests {
 
         cpu_mem_map
     }
-
 }
