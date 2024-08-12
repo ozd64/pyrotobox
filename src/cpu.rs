@@ -87,6 +87,7 @@ impl Cpu {
         let opcode = self.read_u8(self.r_pc);
 
         let operand_details = self.get_operand_details(opcode);
+        let mut branch_cycles = 0;
 
         match opcode {
             //ADC
@@ -97,13 +98,22 @@ impl Cpu {
                 self.and(operand_details.value)
             }
             0x0A | 0x06 | 0x16 | 0x0E | 0x1E => self.asl(&operand_details),
+            0x90 => self.bcc(operand_details.address, &mut branch_cycles),
+            0xB0 => self.bcs(operand_details.address, &mut branch_cycles),
+            0xF0 => self.beq(operand_details.address, &mut branch_cycles),
+            0x24 | 0x2C => self.bit(operand_details.value),
+            0x30 => self.bmi(operand_details.address, &mut branch_cycles),
+            0xD0 => self.bne(operand_details.address, &mut branch_cycles),
+            0x10 => self.bpl(operand_details.address, &mut branch_cycles),
+            0x50 => self.bvc(operand_details.address, &mut branch_cycles),
+            0x70 => self.bvs(operand_details.address, &mut branch_cycles),
             _ => panic!(
                 "FATAL: Unknown CPU instruction opcode. Read Opcode: 0x{:X} at the address 0x{:X}",
                 opcode, self.r_pc
             ),
         };
 
-        operand_details.cycles as usize
+        (operand_details.cycles + branch_cycles) as usize
     }
 
     fn adc(&mut self, value: u8) {
@@ -152,6 +162,70 @@ impl Cpu {
             self.set_flag(CpuFlag::Zero, new_value == 0);
             self.set_flag(CpuFlag::Carry, carry_flag);
             self.set_flag(CpuFlag::Negative, (new_value & 0x80) > 0);
+        }
+    }
+
+    fn bcc(&mut self, branch_address: u16, branch_cycles: &mut u8) {
+        if !self.get_flag(CpuFlag::Carry) {
+            self.r_pc = branch_address;
+            *branch_cycles += 1;
+        }
+    }
+
+    fn bcs(&mut self, branch_address: u16, branch_cycles: &mut u8) {
+        if self.get_flag(CpuFlag::Carry) {
+            self.r_pc = branch_address;
+            *branch_cycles += 1;
+        }
+    }
+
+    fn beq(&mut self, branch_address: u16, branch_cycles: &mut u8) {
+        if self.get_flag(CpuFlag::Zero) {
+            self.r_pc = branch_address;
+            *branch_cycles += 1;
+        }
+    }
+
+    fn bit(&mut self, value: u8) {
+        let and = self.r_a & value;
+
+        self.set_flag(CpuFlag::Zero, and == 0);
+        self.set_flag(CpuFlag::Overflow, (value & 0x40) > 0);
+        self.set_flag(CpuFlag::Negative, (value & 0x80) > 0);
+    }
+
+    fn bmi(&mut self, branch_address: u16, branch_cycles: &mut u8) {
+        if self.get_flag(CpuFlag::Negative) {
+            self.r_pc = branch_address;
+            *branch_cycles += 1;
+        }
+    }
+
+    fn bne(&mut self, branch_address: u16, branch_cycles: &mut u8) {
+        if !self.get_flag(CpuFlag::Zero) {
+            self.r_pc = branch_address;
+            *branch_cycles += 1;
+        }
+    }
+
+    fn bpl(&mut self, branch_address: u16, branch_cycles: &mut u8) {
+        if !self.get_flag(CpuFlag::Negative) {
+            self.r_pc = branch_address;
+            *branch_cycles += 1;
+        }
+    }
+
+    fn bvc(&mut self, branch_address: u16, branch_cycles: &mut u8) {
+        if !self.get_flag(CpuFlag::Overflow) {
+            self.r_pc = branch_address;
+            *branch_cycles += 1;
+        }
+    }
+
+    fn bvs(&mut self, branch_address: u16, branch_cycles: &mut u8) {
+        if self.get_flag(CpuFlag::Overflow) {
+            self.r_pc = branch_address;
+            *branch_cycles += 1;
         }
     }
 
@@ -207,12 +281,11 @@ impl Cpu {
                 OperandDetails::new(zero_page_addr, value, instruction.2, instruction.1)
             }
             AddressingMode::Relative => {
-                let val = self.read_u8(self.r_pc + 1);
+                let val = self.read_u8(self.r_pc + 1) as i8;
                 let hl = (self.r_pc >> 8) as u8;
 
                 self.r_pc += 2;
-
-                let relative_address = ((self.r_pc as i32) - (val as i32)) as u16;
+                let relative_address = ((self.r_pc as i32) + (val as i32)) as u16;
                 //
                 //If memory page changes then we need extra cycles
                 let extra_cycles = if (relative_address & 0xFF00) != ((hl as u16) << 8) {
@@ -221,10 +294,9 @@ impl Cpu {
                     0
                 };
 
-                // Relative mode is handled within branch instructions
                 OperandDetails::new(
                     relative_address,
-                    val,
+                    0,
                     instruction.2 + extra_cycles,
                     instruction.1,
                 )
@@ -411,6 +483,16 @@ impl Cpu {
         instructions[0x16] = CpuInstruction("ASL".to_string(), AddressingMode::ZeroPageX, 0x06);
         instructions[0x0E] = CpuInstruction("ASL".to_string(), AddressingMode::Absolute, 0x06);
         instructions[0x1E] = CpuInstruction("ASL".to_string(), AddressingMode::AbsoluteX, 0x07);
+        instructions[0x90] = CpuInstruction("BCC".to_string(), AddressingMode::Relative, 0x02);
+        instructions[0xB0] = CpuInstruction("BCS".to_string(), AddressingMode::Relative, 0x02);
+        instructions[0xF0] = CpuInstruction("BEQ".to_string(), AddressingMode::Relative, 0x02);
+        instructions[0x24] = CpuInstruction("BIT".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0x2C] = CpuInstruction("BIT".to_string(), AddressingMode::Absolute, 0x02);
+        instructions[0x30] = CpuInstruction("BMI".to_string(), AddressingMode::Relative, 0x02);
+        instructions[0xD0] = CpuInstruction("BNE".to_string(), AddressingMode::Relative, 0x02);
+        instructions[0x10] = CpuInstruction("BPL".to_string(), AddressingMode::Relative, 0x02);
+        instructions[0x50] = CpuInstruction("BVC".to_string(), AddressingMode::Relative, 0x02);
+        instructions[0x70] = CpuInstruction("BVS".to_string(), AddressingMode::Relative, 0x02);
     }
 }
 
@@ -498,6 +580,126 @@ mod tests {
         assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
         assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
         assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_bcc() {
+        let cpu_mem_map = generate_mem_map(&vec![0x90, 200]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.r_pc, 0xAA74);
+    }
+
+    #[test]
+    fn cpu_instruction_bcs() {
+        let cpu_mem_map = generate_mem_map(&vec![0xB0, 200]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Carry, true);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.r_pc, 0xAA74);
+    }
+
+    #[test]
+    fn cpu_instruction_beq() {
+        let cpu_mem_map = generate_mem_map(&vec![0xF0, 200]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Zero, true);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.r_pc, 0xAA74);
+    }
+
+    #[test]
+    fn cpu_instruction_bit() {
+        let mut cpu_mem_map = generate_mem_map(&vec![0x24, 0x00]);
+        cpu_mem_map[0x0000] = 0x99;
+
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 0x50;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+        assert_eq!(cpu.get_flag(CpuFlag::Overflow), false);
+    }
+    
+    #[test]
+    fn cpu_instruction_bmi() {
+        let cpu_mem_map = generate_mem_map(&vec![0x30, 200]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Negative, true);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.r_pc, 0xAA74);
+    }
+
+    #[test]
+    fn cpu_instruction_bne() {
+        let cpu_mem_map = generate_mem_map(&vec![0xD0, 200]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Zero, false);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.r_pc, 0xAA74);
+    }
+
+    #[test]
+    fn cpu_instruction_bpl() {
+        let cpu_mem_map = generate_mem_map(&vec![0x10, 200]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Negative, false);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.r_pc, 0xAA74);
+    }
+
+    #[test]
+    fn cpu_instruction_bvc() {
+        let cpu_mem_map = generate_mem_map(&vec![0x50, 200]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Overflow, false);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.r_pc, 0xAA74);
+    }
+
+    #[test]
+    fn cpu_instruction_bvs() {
+        let cpu_mem_map = generate_mem_map(&vec![0x70, 200]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Overflow, true);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.r_pc, 0xAA74);
     }
 
     fn generate_mem_map(instructions: &[u8]) -> CpuMemMap {
