@@ -2,6 +2,8 @@ use byteorder::{ByteOrder, LittleEndian};
 
 use crate::mapper::CpuMemMap;
 
+const CPU_STACK_START_OFFSET: u16 = 0x0100;
+
 #[derive(Debug, Clone, Copy)]
 enum AddressingMode {
     Implied,
@@ -21,13 +23,13 @@ enum AddressingMode {
 
 #[derive(Debug, Clone, Copy)]
 enum CpuFlag {
-    Carry = 0,
-    Zero = 1,
-    InterruptDisable = 2,
-    Decimal = 3,
-    Break = 4,
-    Overflow = 6,
-    Negative = 7,
+    Carry = 1 << 0,
+    Zero = 1 << 1,
+    InterruptDisable = 1 << 2,
+    Decimal = 1 << 3,
+    Break = 1 << 4,
+    Overflow = 1 << 6,
+    Negative = 1 << 7,
 }
 
 #[derive(Debug, Clone)]
@@ -105,8 +107,17 @@ impl Cpu {
             0x30 => self.bmi(operand_details.address, &mut branch_cycles),
             0xD0 => self.bne(operand_details.address, &mut branch_cycles),
             0x10 => self.bpl(operand_details.address, &mut branch_cycles),
+            0x00 => self.brk(),
             0x50 => self.bvc(operand_details.address, &mut branch_cycles),
             0x70 => self.bvs(operand_details.address, &mut branch_cycles),
+            0x18 => self.clc(),
+            0xD8 => self.cld(),
+            0x58 => self.cli(),
+            0xB8 => self.clv(),
+            0xEA => self.nop(),
+            0xC9 | 0xC5 | 0xD5 | 0xCD | 0xDD | 0xD9 | 0xC1 | 0xD1 => {
+                self.cmp(operand_details.value)
+            }
             _ => panic!(
                 "FATAL: Unknown CPU instruction opcode. Read Opcode: 0x{:X} at the address 0x{:X}",
                 opcode, self.r_pc
@@ -215,6 +226,20 @@ impl Cpu {
         }
     }
 
+    fn brk(&mut self) {
+        let pc_hl = (self.r_pc >> 8) as u8;
+        let pc_ll = (self.r_pc & 0x00FF) as u8;
+
+        self.push_stack(pc_hl);
+        self.push_stack(pc_ll);
+
+        self.push_stack(self.r_flags);
+
+        self.r_pc = Cpu::irq_vector(&self.mem_map);
+
+        self.set_flag(CpuFlag::Break, true);
+    }
+
     fn bvc(&mut self, branch_address: u16, branch_cycles: &mut u8) {
         if !self.get_flag(CpuFlag::Overflow) {
             self.r_pc = branch_address;
@@ -227,6 +252,33 @@ impl Cpu {
             self.r_pc = branch_address;
             *branch_cycles += 1;
         }
+    }
+
+    fn clc(&mut self) {
+        self.set_flag(CpuFlag::Carry, false)
+    }
+
+    fn cld(&mut self) {
+        self.set_flag(CpuFlag::Decimal, false)
+    }
+
+    fn cli(&mut self) {
+        self.set_flag(CpuFlag::InterruptDisable, false)
+    }
+
+    fn clv(&mut self) {
+        self.set_flag(CpuFlag::Overflow, false)
+    }
+
+    fn cmp(&mut self, value: u8) {
+        let result = self.r_a.wrapping_sub(value);
+
+        println!("flags: {:X}", self.r_flags);
+        self.set_flag(CpuFlag::Carry, self.r_a >= value);
+        self.set_flag(CpuFlag::Zero, result == 0);
+        self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+
+        println!("flags: {:X}", self.r_flags);
     }
 
     #[inline]
@@ -404,16 +456,24 @@ impl Cpu {
     }
 
     fn get_flag(&self, flag: CpuFlag) -> bool {
-        let bit_mask = 1 << flag as u8;
-
-        (self.r_flags & bit_mask) > 0
+        (self.r_flags & flag as u8) > 0
     }
 
     fn set_flag(&mut self, flag: CpuFlag, value: bool) {
-        let flag_value = value as u8;
-        let bit_mask = flag_value << flag as u8;
+        let f = flag as u8;
 
-        self.r_flags = 0xFF & bit_mask;
+        if value {
+            self.r_flags |= f;
+        } else {
+            self.r_flags &= !f;
+        }
+
+        //        let flag_value = value as u8;
+        //        let bit_mask = flag_value << flag as u8;
+        //
+        //        println!("Flag: {:?}, bit_mask: {}", flag, bit_mask);
+        //
+        //        self.r_flags = 0xFF & bit_mask;
     }
 
     fn read_u8(&self, address: u16) -> u8 {
@@ -456,9 +516,32 @@ impl Cpu {
         }
     }
 
+    fn push_stack(&mut self, value: u8) {
+        let addr = CPU_STACK_START_OFFSET | (self.r_sp as u16);
+
+        self.write_u8(addr, value);
+        self.r_sp -= 1;
+    }
+
+    fn pop_stack(&mut self) -> u8 {
+        self.r_sp += 1;
+        let addr = CPU_STACK_START_OFFSET | (self.r_sp as u16);
+        let stack_value = self.read_u8(addr);
+
+        // Clean up stack value after popping
+        self.write_u8(addr, 0x00);
+
+        stack_value
+    }
+
     #[inline]
     fn reset_vector(cpu_mem_map: &CpuMemMap) -> u16 {
         LittleEndian::read_u16(&cpu_mem_map[0xFFFC..0xFFFE])
+    }
+
+    #[inline]
+    fn irq_vector(cpu_mem_map: &CpuMemMap) -> u16 {
+        LittleEndian::read_u16(&cpu_mem_map[0xFFFE..0x10000])
     }
 
     fn generate_inst_defs(instructions: &mut Vec<CpuInstruction>) {
@@ -491,8 +574,22 @@ impl Cpu {
         instructions[0x30] = CpuInstruction("BMI".to_string(), AddressingMode::Relative, 0x02);
         instructions[0xD0] = CpuInstruction("BNE".to_string(), AddressingMode::Relative, 0x02);
         instructions[0x10] = CpuInstruction("BPL".to_string(), AddressingMode::Relative, 0x02);
+        instructions[0x00] = CpuInstruction("BRK".to_string(), AddressingMode::Implied, 0x07);
         instructions[0x50] = CpuInstruction("BVC".to_string(), AddressingMode::Relative, 0x02);
         instructions[0x70] = CpuInstruction("BVS".to_string(), AddressingMode::Relative, 0x02);
+        instructions[0x18] = CpuInstruction("CLC".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0xD8] = CpuInstruction("CLD".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0x58] = CpuInstruction("CLI".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0xB8] = CpuInstruction("CLV".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0xC9] = CpuInstruction("CMP".to_string(), AddressingMode::Immediate, 0x02);
+        instructions[0xC5] = CpuInstruction("CMP".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0xD5] = CpuInstruction("CMP".to_string(), AddressingMode::ZeroPageX, 0x04);
+        instructions[0xCD] = CpuInstruction("CMP".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0xDD] = CpuInstruction("CMP".to_string(), AddressingMode::AbsoluteX, 0x04);
+        instructions[0xD9] = CpuInstruction("CMP".to_string(), AddressingMode::AbsoluteY, 0x04);
+        instructions[0xC1] = CpuInstruction("CMP".to_string(), AddressingMode::IndirectX, 0x06);
+        instructions[0xD1] = CpuInstruction("CMP".to_string(), AddressingMode::IndirectY, 0x05);
+        instructions[0xEA] = CpuInstruction("NOP".to_string(), AddressingMode::Implied, 0x02);
     }
 }
 
@@ -529,7 +626,7 @@ mod tests {
         assert_eq!(cycles, 2);
 
         assert_eq!(cpu.r_a, 65);
-        assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), true);
         assert_eq!(cpu.get_flag(CpuFlag::Overflow), true);
         assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
         assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
@@ -636,7 +733,7 @@ mod tests {
         assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
         assert_eq!(cpu.get_flag(CpuFlag::Overflow), false);
     }
-    
+
     #[test]
     fn cpu_instruction_bmi() {
         let cpu_mem_map = generate_mem_map(&vec![0x30, 200]);
@@ -677,6 +774,31 @@ mod tests {
     }
 
     #[test]
+    fn cpu_instruction_brk() {
+        let cpu_mem_map = generate_mem_map(&vec![0x00]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        let r_pc = cpu.r_pc;
+        let flags = cpu.r_flags;
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 0x07);
+
+        assert_eq!(cpu.get_flag(CpuFlag::Break), true);
+        assert_eq!(cpu.r_pc, 0xBBBB);
+
+        let popped_flags = cpu.pop_stack();
+        assert_eq!(popped_flags, flags);
+
+        let ll = cpu.pop_stack();
+        let hl = cpu.pop_stack();
+
+        let pc = LittleEndian::read_u16(&vec![ll, hl]);
+
+        assert_eq!(pc, r_pc + 1);
+    }
+
+    #[test]
     fn cpu_instruction_bvc() {
         let cpu_mem_map = generate_mem_map(&vec![0x50, 200]);
         let mut cpu = Cpu::new(cpu_mem_map);
@@ -702,11 +824,81 @@ mod tests {
         assert_eq!(cpu.r_pc, 0xAA74);
     }
 
+    #[test]
+    fn cpu_instruction_clc() {
+        let cpu_mem_map = generate_mem_map(&vec![0x18]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Carry, true);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
+    }
+
+    #[test]
+    fn cpu_instruction_cld() {
+        let cpu_mem_map = generate_mem_map(&vec![0xD8]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Decimal, true);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.get_flag(CpuFlag::Decimal), false);
+    }
+
+    #[test]
+    fn cpu_instruction_cli() {
+        let cpu_mem_map = generate_mem_map(&vec![0x58]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::InterruptDisable, true);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.get_flag(CpuFlag::InterruptDisable), false);
+    }
+
+    #[test]
+    fn cpu_instruction_clv() {
+        let cpu_mem_map = generate_mem_map(&vec![0xB8]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Overflow, true);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.get_flag(CpuFlag::Overflow), false);
+    }
+
+    #[test]
+    fn cpu_instruction_cmp() {
+        let cpu_mem_map = generate_mem_map(&vec![0xC9, 150]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 200;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), true);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
     fn generate_mem_map(instructions: &[u8]) -> CpuMemMap {
         let mut cpu_mem_map = vec![0x00; 0x10_000];
 
         cpu_mem_map[0xFFFC] = 0xAA;
         cpu_mem_map[0xFFFD] = 0xAA;
+        cpu_mem_map[0xFFFE] = 0xBB;
+        cpu_mem_map[0xFFFF] = 0xBB;
 
         match instructions.len() {
             1 => cpu_mem_map[0xAAAA] = instructions[0],
