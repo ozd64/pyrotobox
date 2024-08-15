@@ -114,10 +114,21 @@ impl Cpu {
             0xD8 => self.cld(),
             0x58 => self.cli(),
             0xB8 => self.clv(),
-            0xEA => self.nop(),
             0xC9 | 0xC5 | 0xD5 | 0xCD | 0xDD | 0xD9 | 0xC1 | 0xD1 => {
                 self.cmp(operand_details.value)
             }
+            0xE0 | 0xE4 | 0xEC => self.cpx(operand_details.value),
+            0xC0 | 0xC4 | 0xCC => self.cpy(operand_details.value),
+            0xCE | 0xC6 | 0xD6 | 0xDE => self.dec(operand_details.address, operand_details.value),
+            0xCA => self.dex(),
+            0x88 => self.dey(),
+            0x49 | 0x45 | 0x55 | 0x4D | 0x5D | 0x59 | 0x41 | 0x51 => {
+                self.eor(operand_details.value)
+            }
+            0xE6 | 0xF6 | 0xEE | 0xFE => self.inc(operand_details.address, operand_details.value),
+            0xE8 => self.inx(),
+            0xC8 => self.iny(),
+            0xEA => self.nop(),
             _ => panic!(
                 "FATAL: Unknown CPU instruction opcode. Read Opcode: 0x{:X} at the address 0x{:X}",
                 opcode, self.r_pc
@@ -273,12 +284,88 @@ impl Cpu {
     fn cmp(&mut self, value: u8) {
         let result = self.r_a.wrapping_sub(value);
 
-        println!("flags: {:X}", self.r_flags);
         self.set_flag(CpuFlag::Carry, self.r_a >= value);
         self.set_flag(CpuFlag::Zero, result == 0);
         self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+    }
 
-        println!("flags: {:X}", self.r_flags);
+    fn cpx(&mut self, value: u8) {
+        let result = self.r_x.wrapping_sub(value);
+
+        self.set_flag(CpuFlag::Carry, self.r_x >= value);
+        self.set_flag(CpuFlag::Zero, result == 0);
+        self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+    }
+
+    fn cpy(&mut self, value: u8) {
+        let result = self.r_y.wrapping_sub(value);
+
+        self.set_flag(CpuFlag::Carry, self.r_y >= value);
+        self.set_flag(CpuFlag::Zero, result == 0);
+        self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+    }
+
+    fn dec(&mut self, address: u16, value: u8) {
+        let result = value.wrapping_sub(1);
+
+        self.write_u8(address, result);
+
+        self.set_flag(CpuFlag::Zero, result == 0);
+        self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+    }
+
+    fn dex(&mut self) {
+        let result = self.r_x.wrapping_sub(1);
+
+        self.r_x = result;
+
+        self.set_flag(CpuFlag::Zero, result == 0);
+        self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+    }
+
+    fn dey(&mut self) {
+        let result = self.r_y.wrapping_sub(1);
+
+        self.r_y = result;
+
+        self.set_flag(CpuFlag::Zero, result == 0);
+        self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+    }
+
+    fn eor(&mut self, value: u8) {
+        let result = self.r_a ^ value;
+
+        self.r_a = result;
+
+        self.set_flag(CpuFlag::Zero, result == 0);
+        self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+    }
+
+    fn inc(&mut self, address: u16, value: u8) {
+        let result = value.wrapping_add(1);
+
+        self.write_u8(address, result);
+
+        self.set_flag(CpuFlag::Zero, result == 0);
+        self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+    }
+
+    fn inx(&mut self) {
+        let result = self.r_x.wrapping_add(1);
+
+        self.r_x = result;
+
+        self.set_flag(CpuFlag::Zero, result == 0);
+        self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+    }
+
+    fn iny(&mut self) {
+        let result = self.r_y.wrapping_add(1);
+
+        self.r_y = result;
+
+        self.set_flag(CpuFlag::Zero, result == 0);
+        self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
     }
 
     #[inline]
@@ -589,6 +676,32 @@ impl Cpu {
         instructions[0xD9] = CpuInstruction("CMP".to_string(), AddressingMode::AbsoluteY, 0x04);
         instructions[0xC1] = CpuInstruction("CMP".to_string(), AddressingMode::IndirectX, 0x06);
         instructions[0xD1] = CpuInstruction("CMP".to_string(), AddressingMode::IndirectY, 0x05);
+        instructions[0xE0] = CpuInstruction("CPX".to_string(), AddressingMode::Immediate, 0x02);
+        instructions[0xE4] = CpuInstruction("CPX".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0xEC] = CpuInstruction("CPX".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0xC0] = CpuInstruction("CPY".to_string(), AddressingMode::Immediate, 0x02);
+        instructions[0xC4] = CpuInstruction("CPY".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0xCC] = CpuInstruction("CPY".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0xC6] = CpuInstruction("DEC".to_string(), AddressingMode::ZeroPage, 0x05);
+        instructions[0xD6] = CpuInstruction("DEC".to_string(), AddressingMode::ZeroPageX, 0x06);
+        instructions[0xCE] = CpuInstruction("DEC".to_string(), AddressingMode::Absolute, 0x06);
+        instructions[0xDE] = CpuInstruction("DEC".to_string(), AddressingMode::AbsoluteX, 0x07);
+        instructions[0xCA] = CpuInstruction("DEX".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0x88] = CpuInstruction("DEY".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0x49] = CpuInstruction("EOR".to_string(), AddressingMode::Immediate, 0x02);
+        instructions[0x45] = CpuInstruction("EOR".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0x55] = CpuInstruction("EOR".to_string(), AddressingMode::ZeroPageX, 0x04);
+        instructions[0x4D] = CpuInstruction("EOR".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0x5D] = CpuInstruction("EOR".to_string(), AddressingMode::AbsoluteX, 0x04);
+        instructions[0x59] = CpuInstruction("EOR".to_string(), AddressingMode::AbsoluteY, 0x04);
+        instructions[0x41] = CpuInstruction("EOR".to_string(), AddressingMode::IndirectX, 0x06);
+        instructions[0x51] = CpuInstruction("EOR".to_string(), AddressingMode::IndirectY, 0x05);
+        instructions[0xE6] = CpuInstruction("INC".to_string(), AddressingMode::ZeroPage, 0x05);
+        instructions[0xF6] = CpuInstruction("INC".to_string(), AddressingMode::ZeroPageX, 0x06);
+        instructions[0xEE] = CpuInstruction("INC".to_string(), AddressingMode::Absolute, 0x06);
+        instructions[0xFE] = CpuInstruction("INC".to_string(), AddressingMode::AbsoluteX, 0x07);
+        instructions[0xE8] = CpuInstruction("INX".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0xC8] = CpuInstruction("INY".to_string(), AddressingMode::Implied, 0x02);
         instructions[0xEA] = CpuInstruction("NOP".to_string(), AddressingMode::Implied, 0x02);
     }
 }
@@ -889,6 +1002,150 @@ mod tests {
 
         assert_eq!(cpu.get_flag(CpuFlag::Carry), true);
         assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_cpx() {
+        let cpu_mem_map = generate_mem_map(&vec![0xE0, 150]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_x = 200;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), true);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_cpy() {
+        let cpu_mem_map = generate_mem_map(&vec![0xC0, 150]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_y = 200;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), true);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_dec() {
+        let cpu_mem_map = generate_mem_map(&vec![0xC6, 0x00]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.mem_map[0x0000] = 1;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 5);
+
+        assert_eq!(cpu.read_u8(0x0000), 0x00);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), true);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_dex() {
+        let cpu_mem_map = generate_mem_map(&vec![0xCA]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_x = 1;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_x, 0x00);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), true);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_dey() {
+        let cpu_mem_map = generate_mem_map(&vec![0x88]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_y = 1;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_y, 0x00);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), true);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_eor() {
+        let cpu_mem_map = generate_mem_map(&vec![0x49, 150]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 170;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_a, 0x3C);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_inc() {
+        let cpu_mem_map = generate_mem_map(&vec![0xE6, 0x00]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.mem_map[0x0000] = 0xFF;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 5);
+
+        assert_eq!(cpu.read_u8(0x0000), 0x00);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), true);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_inx() {
+        let cpu_mem_map = generate_mem_map(&vec![0xE8]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_x = 0xFF;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_x, 0x00);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), true);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_iny() {
+        let cpu_mem_map = generate_mem_map(&vec![0xC8]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_y = 0xFF;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_y, 0x00);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), true);
         assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
     }
 
