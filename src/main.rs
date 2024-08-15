@@ -19,7 +19,7 @@ fn main() {
     println!("----- pyrotobox v0.1.0 BETA -----");
     println!("ROM File Path: {:?}", rom_file_path);
 
-    let nes = match Nes::new(rom_file_path) {
+    let mut nes = match Nes::new(rom_file_path) {
         Ok(nes_instance) => nes_instance,
         Err(err) => {
             eprintln!(

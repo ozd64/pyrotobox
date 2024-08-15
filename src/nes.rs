@@ -41,7 +41,10 @@ impl Nes {
         Ok(Nes { cpu })
     }
 
-    pub fn start(&self) {
-        //TODO: Implement NES processing
+    pub fn start(&mut self) {
+        loop {
+            //TODO: Handle cycles once PPU is being implemented
+            let _ = self.cpu.exec_instruction();
+        }
     }
 }

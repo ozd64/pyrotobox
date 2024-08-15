@@ -128,6 +128,7 @@ impl Cpu {
             0xE6 | 0xF6 | 0xEE | 0xFE => self.inc(operand_details.address, operand_details.value),
             0xE8 => self.inx(),
             0xC8 => self.iny(),
+            0x4C | 0x6C => self.jmp(operand_details.address),
             0xEA => self.nop(),
             _ => panic!(
                 "FATAL: Unknown CPU instruction opcode. Read Opcode: 0x{:X} at the address 0x{:X}",
@@ -366,6 +367,11 @@ impl Cpu {
 
         self.set_flag(CpuFlag::Zero, result == 0);
         self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+    }
+
+    #[inline]
+    fn jmp(&mut self, address: u16) {
+        self.r_pc = address;
     }
 
     #[inline]
@@ -702,6 +708,8 @@ impl Cpu {
         instructions[0xFE] = CpuInstruction("INC".to_string(), AddressingMode::AbsoluteX, 0x07);
         instructions[0xE8] = CpuInstruction("INX".to_string(), AddressingMode::Implied, 0x02);
         instructions[0xC8] = CpuInstruction("INY".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0x4C] = CpuInstruction("JMP".to_string(), AddressingMode::Absolute, 0x03);
+        instructions[0x6C] = CpuInstruction("JMP".to_string(), AddressingMode::Indirect, 0x05);
         instructions[0xEA] = CpuInstruction("NOP".to_string(), AddressingMode::Implied, 0x02);
     }
 }
@@ -1147,6 +1155,18 @@ mod tests {
         assert_eq!(cpu.r_y, 0x00);
         assert_eq!(cpu.get_flag(CpuFlag::Zero), true);
         assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_jmp() {
+        let cpu_mem_map = generate_mem_map(&vec![0x4C, 0xCD, 0xAB]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+
+        assert_eq!(cpu.r_pc, 0xABCD);
     }
 
     fn generate_mem_map(instructions: &[u8]) -> CpuMemMap {
