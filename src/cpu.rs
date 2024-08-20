@@ -130,7 +130,20 @@ impl Cpu {
             0xC8 => self.iny(),
             0x4C | 0x6C => self.jmp(operand_details.address),
             0x20 => self.jsr(operand_details.address),
+            0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
+                self.lda(operand_details.value)
+            }
+            0xA2 | 0xA6 | 0xB6 | 0xAE | 0xBE => self.ldx(operand_details.value),
+            0xA0 | 0xA4 | 0xB4 | 0xAC | 0xBC => self.ldy(operand_details.value),
+            0x4A | 0x46 | 0x56 | 0x4E | 0x5E => self.lsr(&operand_details),
             0xEA => self.nop(),
+            0x09 | 0x05 | 0x15 | 0x0D | 0x1D | 0x19 | 0x01 | 0x11 => {
+                self.ora(operand_details.value)
+            }
+            0x48 => self.pha(),
+            0x08 => self.php(),
+            0x68 => self.pla(),
+            0x28 => self.plp(),
             _ => panic!(
                 "FATAL: Unknown CPU instruction opcode. Read Opcode: 0x{:X} at the address 0x{:X}",
                 opcode, self.r_pc
@@ -387,9 +400,85 @@ impl Cpu {
         self.r_pc = address;
     }
 
+    fn lda(&mut self, value: u8) {
+        self.r_a = value;
+
+        self.set_flag(CpuFlag::Zero, value == 0x00);
+        self.set_flag(CpuFlag::Negative, value & 0x80 > 0);
+    }
+
+    fn ldx(&mut self, value: u8) {
+        self.r_x = value;
+
+        self.set_flag(CpuFlag::Zero, value == 0x00);
+        self.set_flag(CpuFlag::Negative, value & 0x80 > 0);
+    }
+
+    fn ldy(&mut self, value: u8) {
+        self.r_y = value;
+
+        self.set_flag(CpuFlag::Zero, value == 0x00);
+        self.set_flag(CpuFlag::Negative, value & 0x80 > 0);
+    }
+
+    fn lsr(&mut self, operand_details: &OperandDetails) {
+        if let AddressingMode::Accumulator = operand_details.addressing_mode {
+            let old_a = self.r_a;
+            let carry_flag = (old_a & 0x01) > 0;
+
+            self.r_a = old_a >> 1;
+
+            self.set_flag(CpuFlag::Zero, self.r_a == 0);
+            self.set_flag(CpuFlag::Carry, carry_flag);
+            self.set_flag(CpuFlag::Negative, (self.r_a & 0x80) > 0);
+        } else {
+            let carry_flag = (operand_details.value & 0x01) > 0;
+            let new_value = operand_details.value >> 1;
+
+            self.write_u8(operand_details.address, new_value);
+
+            self.set_flag(CpuFlag::Zero, new_value == 0);
+            self.set_flag(CpuFlag::Carry, carry_flag);
+            self.set_flag(CpuFlag::Negative, (new_value & 0x80) > 0);
+        }
+    }
+
     #[inline]
     fn nop(&self) {
         ()
+    }
+
+    fn ora(&mut self, value: u8) {
+        let result = self.r_a | value;
+
+        self.set_flag(CpuFlag::Zero, result == 0x00);
+        self.set_flag(CpuFlag::Negative, result & 0x80 > 0);
+
+        self.r_a = result;
+    }
+
+    #[inline]
+    fn pha(&mut self) {
+        self.push_stack(self.r_a);
+    }
+
+    #[inline]
+    fn php(&mut self) {
+        self.push_stack(self.r_flags);
+    }
+
+    fn pla(&mut self) {
+        let value = self.pop_stack();
+
+        self.r_a = value;
+
+        self.set_flag(CpuFlag::Zero, value == 0x00);
+        self.set_flag(CpuFlag::Negative, value & 0x80 > 0x00);
+    }
+
+    fn plp(&mut self) {
+        let value = self.pop_stack();
+        self.r_flags = value;
     }
 
     fn get_operand_details(&mut self, opcode: u8) -> OperandDetails {
@@ -573,13 +662,6 @@ impl Cpu {
         } else {
             self.r_flags &= !f;
         }
-
-        //        let flag_value = value as u8;
-        //        let bit_mask = flag_value << flag as u8;
-        //
-        //        println!("Flag: {:?}, bit_mask: {}", flag, bit_mask);
-        //
-        //        self.r_flags = 0xFF & bit_mask;
     }
 
     fn read_u8(&self, address: u16) -> u8 {
@@ -724,7 +806,42 @@ impl Cpu {
         instructions[0x4C] = CpuInstruction("JMP".to_string(), AddressingMode::Absolute, 0x03);
         instructions[0x6C] = CpuInstruction("JMP".to_string(), AddressingMode::Indirect, 0x05);
         instructions[0x20] = CpuInstruction("JSR".to_string(), AddressingMode::Absolute, 0x06);
+        instructions[0xA9] = CpuInstruction("LDA".to_string(), AddressingMode::Immediate, 0x02);
+        instructions[0xA5] = CpuInstruction("LDA".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0xB5] = CpuInstruction("LDA".to_string(), AddressingMode::ZeroPageX, 0x04);
+        instructions[0xAD] = CpuInstruction("LDA".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0xBD] = CpuInstruction("LDA".to_string(), AddressingMode::AbsoluteX, 0x04);
+        instructions[0xB9] = CpuInstruction("LDA".to_string(), AddressingMode::AbsoluteY, 0x04);
+        instructions[0xA1] = CpuInstruction("LDA".to_string(), AddressingMode::IndirectX, 0x06);
+        instructions[0xB1] = CpuInstruction("LDA".to_string(), AddressingMode::IndirectY, 0x05);
+        instructions[0xA2] = CpuInstruction("LDX".to_string(), AddressingMode::Immediate, 0x02);
+        instructions[0xA6] = CpuInstruction("LDX".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0xB6] = CpuInstruction("LDX".to_string(), AddressingMode::ZeroPageY, 0x04);
+        instructions[0xAE] = CpuInstruction("LDX".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0xBE] = CpuInstruction("LDX".to_string(), AddressingMode::AbsoluteY, 0x04);
+        instructions[0xA0] = CpuInstruction("LDY".to_string(), AddressingMode::Immediate, 0x02);
+        instructions[0xA4] = CpuInstruction("LDY".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0xB4] = CpuInstruction("LDY".to_string(), AddressingMode::ZeroPageX, 0x04);
+        instructions[0xAC] = CpuInstruction("LDY".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0xBC] = CpuInstruction("LDY".to_string(), AddressingMode::AbsoluteX, 0x04);
+        instructions[0x4A] = CpuInstruction("LSR".to_string(), AddressingMode::Accumulator, 0x02);
+        instructions[0x46] = CpuInstruction("LSR".to_string(), AddressingMode::ZeroPage, 0x05);
+        instructions[0x56] = CpuInstruction("LSR".to_string(), AddressingMode::ZeroPageX, 0x06);
+        instructions[0x4E] = CpuInstruction("LSR".to_string(), AddressingMode::Absolute, 0x06);
+        instructions[0x5E] = CpuInstruction("LSR".to_string(), AddressingMode::AbsoluteX, 0x07);
         instructions[0xEA] = CpuInstruction("NOP".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0x09] = CpuInstruction("ORA".to_string(), AddressingMode::Immediate, 0x02);
+        instructions[0x05] = CpuInstruction("ORA".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0x15] = CpuInstruction("ORA".to_string(), AddressingMode::ZeroPageX, 0x04);
+        instructions[0x0D] = CpuInstruction("ORA".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0x1D] = CpuInstruction("ORA".to_string(), AddressingMode::AbsoluteX, 0x04);
+        instructions[0x19] = CpuInstruction("ORA".to_string(), AddressingMode::AbsoluteY, 0x04);
+        instructions[0x01] = CpuInstruction("ORA".to_string(), AddressingMode::IndirectX, 0x06);
+        instructions[0x11] = CpuInstruction("ORA".to_string(), AddressingMode::IndirectY, 0x05);
+        instructions[0x48] = CpuInstruction("PHA".to_string(), AddressingMode::Implied, 0x03);
+        instructions[0x08] = CpuInstruction("PHP".to_string(), AddressingMode::Implied, 0x03);
+        instructions[0x68] = CpuInstruction("PLA".to_string(), AddressingMode::Implied, 0x04);
+        instructions[0x28] = CpuInstruction("PLP".to_string(), AddressingMode::Implied, 0x04);
     }
 }
 
@@ -1201,6 +1318,161 @@ mod tests {
         let pc = LittleEndian::read_u16(&vec![ll, hl]);
 
         assert_eq!(pc, r_pc);
+    }
+
+    #[test]
+    fn cpu_instruction_lda() {
+        let cpu_mem_map = generate_mem_map(&vec![0xA9, 0xBB]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.r_a, 0xBB);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+    }
+
+    #[test]
+    fn cpu_instruction_ldx() {
+        let cpu_mem_map = generate_mem_map(&vec![0xA2, 0xBB]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.r_x, 0xBB);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+    }
+
+    #[test]
+    fn cpu_instruction_ldy() {
+        let cpu_mem_map = generate_mem_map(&vec![0xA0, 0xBB]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.r_y, 0xBB);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+    }
+
+    #[test]
+    fn cpu_instruction_lsr() {
+        let cpu_mem_map = generate_mem_map(&vec![0x4A]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 0xAA;
+
+        cpu.set_flag(CpuFlag::Carry, true);
+        cpu.set_flag(CpuFlag::Zero, true);
+        cpu.set_flag(CpuFlag::Negative, true);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_a, 0x55);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+
+        let cpu_mem_map = generate_mem_map(&vec![0x46, 0x00]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Carry, true);
+        cpu.set_flag(CpuFlag::Zero, true);
+        cpu.set_flag(CpuFlag::Negative, true);
+        cpu.write_u8(0x0000, 0xAA);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 5);
+
+        assert_eq!(cpu.read_u8(0x0000), 0x55);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_ora() {
+        let cpu_mem_map = generate_mem_map(&vec![0x09, 150]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 170;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_a, 0xBE);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+    }
+
+    #[test]
+    fn cpu_instruction_pha() {
+        let cpu_mem_map = generate_mem_map(&vec![0x48]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 0xAA;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+
+        let popped_a = cpu.pop_stack();
+
+        assert_eq!(popped_a, 0xAA);
+    }
+
+    #[test]
+    fn cpu_instruction_php() {
+        let cpu_mem_map = generate_mem_map(&vec![0x08]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_flags = 0xAA;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+
+        let popped_a = cpu.pop_stack();
+
+        assert_eq!(popped_a, 0xAA);
+    }
+
+    #[test]
+    fn cpu_instruction_pla() {
+        let cpu_mem_map = generate_mem_map(&vec![0x68]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.push_stack(0xAA);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.r_a, 0xAA);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+    }
+
+    #[test]
+    fn cpu_instruction_plp() {
+        let cpu_mem_map = generate_mem_map(&vec![0x28]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.push_stack(0xAA);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.r_flags, 0xAA);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), true);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
     }
 
     fn generate_mem_map(instructions: &[u8]) -> CpuMemMap {
