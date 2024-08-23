@@ -154,6 +154,15 @@ impl Cpu {
             0x38 => self.sec(),
             0xF8 => self.sed(),
             0x78 => self.sei(),
+            0x85 | 0x95 | 0x8D | 0x9D | 0x99 | 0x81 | 0x91 => self.sta(operand_details.address),
+            0x86 | 0x96 | 0x8E => self.stx(operand_details.address),
+            0x84 | 0x94 | 0x8C => self.sty(operand_details.address),
+            0xAA => self.tax(),
+            0xA8 => self.tay(),
+            0xBA => self.tsx(),
+            0x8A => self.txa(),
+            0x9A => self.txs(),
+            0x98 => self.tya(),
             _ => panic!(
                 "FATAL: Unknown CPU instruction opcode. Read Opcode: 0x{:X} at the address 0x{:X}",
                 opcode, self.r_pc
@@ -601,6 +610,63 @@ impl Cpu {
         self.set_flag(CpuFlag::InterruptDisable, true);
     }
 
+    #[inline]
+    fn sta(&mut self, address: u16) {
+        self.write_u8(address, self.r_a);
+    }
+
+    #[inline]
+    fn stx(&mut self, address: u16) {
+        self.write_u8(address, self.r_x);
+    }
+
+    #[inline]
+    fn sty(&mut self, address: u16) {
+        self.write_u8(address, self.r_y);
+    }
+
+    fn tax(&mut self) {
+        self.r_x = self.r_a;
+
+        self.set_flag(CpuFlag::Zero, self.r_x == 0);
+        self.set_flag(CpuFlag::Negative, self.r_x & 0x80 > 0);
+    }
+
+    fn tay(&mut self) {
+        self.r_y = self.r_a;
+
+        self.set_flag(CpuFlag::Zero, self.r_y == 0);
+        self.set_flag(CpuFlag::Negative, self.r_y & 0x80 > 0);
+    }
+
+    fn tsx(&mut self) {
+        self.r_x = self.r_sp;
+
+        self.set_flag(CpuFlag::Zero, self.r_x == 0);
+        self.set_flag(CpuFlag::Negative, self.r_x & 0x80 > 0);
+    }
+
+    fn txa(&mut self) {
+        self.r_a = self.r_x;
+
+        self.set_flag(CpuFlag::Zero, self.r_a == 0);
+        self.set_flag(CpuFlag::Negative, self.r_a & 0x80 > 0);
+    }
+
+    fn txs(&mut self) {
+        self.r_sp = self.r_x;
+
+        self.set_flag(CpuFlag::Zero, self.r_sp == 0);
+        self.set_flag(CpuFlag::Negative, self.r_sp & 0x80 > 0);
+    }
+
+    fn tya(&mut self) {
+        self.r_a = self.r_y;
+
+        self.set_flag(CpuFlag::Zero, self.r_a == 0);
+        self.set_flag(CpuFlag::Negative, self.r_a & 0x80 > 0);
+    }
+
     fn get_operand_details(&mut self, opcode: u8) -> OperandDetails {
         let instruction = &self.instructions[opcode as usize];
 
@@ -985,6 +1051,25 @@ impl Cpu {
         instructions[0x38] = CpuInstruction("SEC".to_string(), AddressingMode::Implied, 0x02);
         instructions[0xF8] = CpuInstruction("SED".to_string(), AddressingMode::Implied, 0x02);
         instructions[0x78] = CpuInstruction("SEI".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0x85] = CpuInstruction("STA".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0x95] = CpuInstruction("STA".to_string(), AddressingMode::ZeroPageX, 0x04);
+        instructions[0x8D] = CpuInstruction("STA".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0x9D] = CpuInstruction("STA".to_string(), AddressingMode::AbsoluteX, 0x05);
+        instructions[0x99] = CpuInstruction("STA".to_string(), AddressingMode::AbsoluteY, 0x05);
+        instructions[0x81] = CpuInstruction("STA".to_string(), AddressingMode::IndirectX, 0x06);
+        instructions[0x91] = CpuInstruction("STA".to_string(), AddressingMode::IndirectY, 0x06);
+        instructions[0x86] = CpuInstruction("STX".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0x96] = CpuInstruction("STX".to_string(), AddressingMode::ZeroPageY, 0x04);
+        instructions[0x8E] = CpuInstruction("STX".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0x84] = CpuInstruction("STY".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0x94] = CpuInstruction("STY".to_string(), AddressingMode::ZeroPageX, 0x04);
+        instructions[0x8C] = CpuInstruction("STY".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0xAA] = CpuInstruction("TAX".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0xA8] = CpuInstruction("TAY".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0xBA] = CpuInstruction("TSX".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0x8A] = CpuInstruction("TXA".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0x9A] = CpuInstruction("TXS".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0x98] = CpuInstruction("TYA".to_string(), AddressingMode::Implied, 0x02);
     }
 }
 
@@ -1780,6 +1865,141 @@ mod tests {
 
         assert_eq!(cycles, 2);
         assert_eq!(cpu.get_flag(CpuFlag::InterruptDisable), true);
+    }
+
+    #[test]
+    fn cpu_instruction_sta() {
+        let cpu_mem_map = generate_mem_map(&vec![0x85, 0x00]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 100;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.read_u8(0x0000), 100);
+    }
+
+    #[test]
+    fn cpu_instruction_stx() {
+        let cpu_mem_map = generate_mem_map(&vec![0x86, 0x00]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_x = 100;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.read_u8(0x0000), 100);
+    }
+
+    #[test]
+    fn cpu_instruction_sty() {
+        let cpu_mem_map = generate_mem_map(&vec![0x84, 0x00]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_y = 100;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu.read_u8(0x0000), 100);
+    }
+
+    #[test]
+    fn cpu_instruction_tax() {
+        let cpu_mem_map = generate_mem_map(&vec![0xAA]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 150;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_a, cpu.r_x);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+    }
+
+    #[test]
+    fn cpu_instruction_tay() {
+        let cpu_mem_map = generate_mem_map(&vec![0xA8]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 150;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_a, cpu.r_y);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+    }
+
+    #[test]
+    fn cpu_instruction_tsx() {
+        let cpu_mem_map = generate_mem_map(&vec![0xBA]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_sp = 150;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_sp, cpu.r_x);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+    }
+
+    #[test]
+    fn cpu_instruction_txa() {
+        let cpu_mem_map = generate_mem_map(&vec![0x8A]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_x = 150;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_x, cpu.r_a);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+    }
+
+    #[test]
+    fn cpu_instruction_txs() {
+        let cpu_mem_map = generate_mem_map(&vec![0x9A]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_x = 150;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_x, cpu.r_sp);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+    }
+
+    #[test]
+    fn cpu_instruction_tya() {
+        let cpu_mem_map = generate_mem_map(&vec![0x98]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_y = 150;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_y, cpu.r_a);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
     }
 
     fn generate_mem_map(instructions: &[u8]) -> CpuMemMap {
