@@ -144,6 +144,16 @@ impl Cpu {
             0x08 => self.php(),
             0x68 => self.pla(),
             0x28 => self.plp(),
+            0x2A | 0x26 | 0x36 | 0x2E | 0x3E => self.rol(&operand_details),
+            0x6A | 0x66 | 0x76 | 0x6E | 0x7E => self.ror(&operand_details),
+            0x40 => self.rti(),
+            0x60 => self.rts(),
+            0xE9 | 0xE5 | 0xF5 | 0xED | 0xFD | 0xF9 | 0xE1 | 0xF1 => {
+                self.sbc(operand_details.value)
+            }
+            0x38 => self.sec(),
+            0xF8 => self.sed(),
+            0x78 => self.sei(),
             _ => panic!(
                 "FATAL: Unknown CPU instruction opcode. Read Opcode: 0x{:X} at the address 0x{:X}",
                 opcode, self.r_pc
@@ -479,6 +489,116 @@ impl Cpu {
     fn plp(&mut self) {
         let value = self.pop_stack();
         self.r_flags = value;
+    }
+
+    fn rol(&mut self, operand_details: &OperandDetails) {
+        if let AddressingMode::Accumulator = operand_details.addressing_mode {
+            let old_a = self.r_a;
+            let carry_flag = (old_a >> 7) > 0;
+            let bit0 = self.r_flags & 0x01;
+
+            self.r_a = old_a << 1;
+            self.r_a |= bit0;
+
+            self.set_flag(CpuFlag::Zero, self.r_a == 0);
+            self.set_flag(CpuFlag::Carry, carry_flag);
+            self.set_flag(CpuFlag::Negative, (self.r_a & 0x80) > 0);
+        } else {
+            let carry_flag = (operand_details.value >> 7) > 0;
+
+            let bit0 = self.r_flags & 0x01;
+            let new_value = (operand_details.value << 1) | bit0;
+
+            self.write_u8(operand_details.address, new_value);
+
+            self.set_flag(CpuFlag::Zero, new_value == 0);
+            self.set_flag(CpuFlag::Carry, carry_flag);
+            self.set_flag(CpuFlag::Negative, (new_value & 0x80) > 0);
+        }
+    }
+
+    fn ror(&mut self, operand_details: &OperandDetails) {
+        if let AddressingMode::Accumulator = operand_details.addressing_mode {
+            let old_a = self.r_a;
+            let carry_flag = (old_a & 0x01) > 0;
+            let bit7 = if self.get_flag(CpuFlag::Carry) {
+                0x80
+            } else {
+                0
+            };
+
+            self.r_a = old_a >> 1;
+            self.r_a |= bit7;
+
+            self.set_flag(CpuFlag::Zero, self.r_a == 0);
+            self.set_flag(CpuFlag::Carry, carry_flag);
+            self.set_flag(CpuFlag::Negative, (self.r_a & 0x80) > 0);
+        } else {
+            let carry_flag = (operand_details.value & 0x01) > 0;
+
+            let bit7 = if self.get_flag(CpuFlag::Carry) {
+                0x80
+            } else {
+                0
+            };
+            let new_value = (operand_details.value >> 1) | bit7;
+
+            self.write_u8(operand_details.address, new_value);
+
+            self.set_flag(CpuFlag::Zero, new_value == 0);
+            self.set_flag(CpuFlag::Carry, carry_flag);
+            self.set_flag(CpuFlag::Negative, (new_value & 0x80) > 0);
+        }
+    }
+
+    fn rti(&mut self) {
+        let flags = self.pop_stack();
+        let r_pc_ll = self.pop_stack();
+        let r_pc_hl = self.pop_stack();
+
+        self.r_pc = LittleEndian::read_u16(&vec![r_pc_ll, r_pc_hl]);
+        self.r_flags = flags;
+    }
+
+    fn rts(&mut self) {
+        let ll = self.pop_stack();
+        let hl = self.pop_stack();
+        let r_pc = LittleEndian::read_u16(&vec![ll, hl]);
+
+        self.r_pc = r_pc + 1;
+    }
+
+    fn sbc(&mut self, value: u8) {
+        let mut new_acc_value = (self.r_a as u16).wrapping_sub(value as u16);
+
+        if self.get_flag(CpuFlag::Carry) {
+            new_acc_value = new_acc_value.wrapping_sub(1);
+        }
+
+        let overflow =
+            (!((self.r_a as u16) ^ (value as u16)) & ((self.r_a as u16) ^ new_acc_value)) & 0x0080;
+
+        self.set_flag(CpuFlag::Carry, new_acc_value > 255);
+        self.set_flag(CpuFlag::Zero, new_acc_value & 0xFF == 0x00);
+        self.set_flag(CpuFlag::Negative, new_acc_value & 0x80 > 0);
+        self.set_flag(CpuFlag::Overflow, overflow > 0);
+
+        self.r_a = (new_acc_value & 0x00FF) as u8;
+    }
+
+    #[inline]
+    fn sec(&mut self) {
+        self.set_flag(CpuFlag::Carry, true);
+    }
+
+    #[inline]
+    fn sed(&mut self) {
+        self.set_flag(CpuFlag::Decimal, true);
+    }
+
+    #[inline]
+    fn sei(&mut self) {
+        self.set_flag(CpuFlag::InterruptDisable, true);
     }
 
     fn get_operand_details(&mut self, opcode: u8) -> OperandDetails {
@@ -842,6 +962,29 @@ impl Cpu {
         instructions[0x08] = CpuInstruction("PHP".to_string(), AddressingMode::Implied, 0x03);
         instructions[0x68] = CpuInstruction("PLA".to_string(), AddressingMode::Implied, 0x04);
         instructions[0x28] = CpuInstruction("PLP".to_string(), AddressingMode::Implied, 0x04);
+        instructions[0x2A] = CpuInstruction("ROL".to_string(), AddressingMode::Accumulator, 0x02);
+        instructions[0x26] = CpuInstruction("ROL".to_string(), AddressingMode::ZeroPage, 0x05);
+        instructions[0x36] = CpuInstruction("ROL".to_string(), AddressingMode::ZeroPageX, 0x06);
+        instructions[0x2E] = CpuInstruction("ROL".to_string(), AddressingMode::Absolute, 0x06);
+        instructions[0x3E] = CpuInstruction("ROL".to_string(), AddressingMode::AbsoluteX, 0x07);
+        instructions[0x6A] = CpuInstruction("ROR".to_string(), AddressingMode::Accumulator, 0x02);
+        instructions[0x66] = CpuInstruction("ROR".to_string(), AddressingMode::ZeroPage, 0x05);
+        instructions[0x76] = CpuInstruction("ROR".to_string(), AddressingMode::ZeroPageX, 0x06);
+        instructions[0x6E] = CpuInstruction("ROR".to_string(), AddressingMode::Absolute, 0x06);
+        instructions[0x7E] = CpuInstruction("ROR".to_string(), AddressingMode::AbsoluteX, 0x07);
+        instructions[0x40] = CpuInstruction("RTI".to_string(), AddressingMode::Implied, 0x06);
+        instructions[0x60] = CpuInstruction("RTS".to_string(), AddressingMode::Implied, 0x06);
+        instructions[0xE9] = CpuInstruction("SBC".to_string(), AddressingMode::Immediate, 0x02);
+        instructions[0xE5] = CpuInstruction("SBC".to_string(), AddressingMode::ZeroPage, 0x03);
+        instructions[0xF5] = CpuInstruction("SBC".to_string(), AddressingMode::ZeroPageX, 0x04);
+        instructions[0xED] = CpuInstruction("SBC".to_string(), AddressingMode::Absolute, 0x04);
+        instructions[0xFD] = CpuInstruction("SBC".to_string(), AddressingMode::AbsoluteX, 0x04);
+        instructions[0xF9] = CpuInstruction("SBC".to_string(), AddressingMode::AbsoluteY, 0x04);
+        instructions[0xE1] = CpuInstruction("SBC".to_string(), AddressingMode::IndirectX, 0x06);
+        instructions[0xF1] = CpuInstruction("SBC".to_string(), AddressingMode::IndirectY, 0x05);
+        instructions[0x38] = CpuInstruction("SEC".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0xF8] = CpuInstruction("SED".to_string(), AddressingMode::Implied, 0x02);
+        instructions[0x78] = CpuInstruction("SEI".to_string(), AddressingMode::Implied, 0x02);
     }
 }
 
@@ -1473,6 +1616,170 @@ mod tests {
         assert_eq!(cpu.r_flags, 0xAA);
         assert_eq!(cpu.get_flag(CpuFlag::Zero), true);
         assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+    }
+
+    #[test]
+    fn cpu_instruction_rol() {
+        let cpu_mem_map = generate_mem_map(&vec![0x2A]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 0x10;
+
+        cpu.set_flag(CpuFlag::Carry, true);
+        cpu.set_flag(CpuFlag::Zero, true);
+        cpu.set_flag(CpuFlag::Negative, true);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_a, 0x21);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+
+        let cpu_mem_map = generate_mem_map(&vec![0x26, 0x00]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Carry, true);
+        cpu.set_flag(CpuFlag::Zero, true);
+        cpu.set_flag(CpuFlag::Negative, true);
+        cpu.write_u8(0x0000, 0x10);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 5);
+
+        assert_eq!(cpu.read_u8(0x0000), 0x21);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_ror() {
+        let cpu_mem_map = generate_mem_map(&vec![0x6A]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.r_a = 0xAA;
+
+        cpu.set_flag(CpuFlag::Carry, true);
+        cpu.set_flag(CpuFlag::Zero, true);
+        cpu.set_flag(CpuFlag::Negative, false);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_a, 0xD5);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+
+        let cpu_mem_map = generate_mem_map(&vec![0x66, 0x00]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Carry, true);
+        cpu.set_flag(CpuFlag::Zero, true);
+        cpu.set_flag(CpuFlag::Negative, false);
+        cpu.write_u8(0x0000, 0xAA);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 5);
+
+        assert_eq!(cpu.read_u8(0x0000), 0xD5);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), true);
+    }
+
+    #[test]
+    fn cpu_instruction_rti() {
+        let cpu_mem_map = generate_mem_map(&vec![0x40]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.push_stack(0xBB);
+        cpu.push_stack(0xAA);
+        cpu.push_stack(0x10);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 6);
+        assert_eq!(cpu.r_pc, 0xBBAA);
+        assert_eq!(cpu.r_flags, 0x10);
+    }
+
+    #[test]
+    fn cpu_instruction_rts() {
+        let cpu_mem_map = generate_mem_map(&vec![0x60]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.push_stack(0xBB);
+        cpu.push_stack(0xA9);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 6);
+        assert_eq!(cpu.r_pc, 0xBBAA);
+    }
+
+    #[test]
+    fn cpu_instruction_sbc() {
+        let cpu_mem_map = generate_mem_map(&vec![0xE9, 149]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Carry, true);
+        cpu.r_a = 170;
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+
+        assert_eq!(cpu.r_a, 20);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Overflow), true);
+        assert_eq!(cpu.get_flag(CpuFlag::Zero), false);
+        assert_eq!(cpu.get_flag(CpuFlag::Negative), false);
+    }
+
+    #[test]
+    fn cpu_instruction_sec() {
+        let cpu_mem_map = generate_mem_map(&vec![0x38]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Carry, false);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.get_flag(CpuFlag::Carry), true);
+    }
+
+    #[test]
+    fn cpu_instruction_sed() {
+        let cpu_mem_map = generate_mem_map(&vec![0xF8]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::Decimal, false);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.get_flag(CpuFlag::Decimal), true);
+    }
+
+    #[test]
+    fn cpu_instruction_sei() {
+        let cpu_mem_map = generate_mem_map(&vec![0x78]);
+        let mut cpu = Cpu::new(cpu_mem_map);
+
+        cpu.set_flag(CpuFlag::InterruptDisable, false);
+
+        let cycles = cpu.exec_instruction();
+
+        assert_eq!(cycles, 2);
+        assert_eq!(cpu.get_flag(CpuFlag::InterruptDisable), true);
     }
 
     fn generate_mem_map(instructions: &[u8]) -> CpuMemMap {
