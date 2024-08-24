@@ -715,7 +715,7 @@ impl Cpu {
 
                 self.r_pc += 2;
                 let relative_address = ((self.r_pc as i32) + (val as i32)) as u16;
-                //
+
                 //If memory page changes then we need extra cycles
                 let extra_cycles = if (relative_address & 0xFF00) != ((hl as u16) << 8) {
                     1
