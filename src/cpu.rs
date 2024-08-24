@@ -86,13 +86,15 @@ impl Cpu {
     }
 
     pub fn exec_instruction(&mut self) -> usize {
+        let r_pc = self.r_pc;
         let opcode = self.read_u8(self.r_pc);
 
         let operand_details = self.get_operand_details(opcode);
+
+        self.disassemble_instruction(r_pc, &self.instructions[opcode as usize], &operand_details);
         let mut branch_cycles = 0;
 
         match opcode {
-            //ADC
             0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
                 self.adc(operand_details.value)
             }
@@ -165,7 +167,7 @@ impl Cpu {
             0x98 => self.tya(),
             _ => panic!(
                 "FATAL: Unknown CPU instruction opcode. Read Opcode: 0x{:X} at the address 0x{:X}",
-                opcode, self.r_pc
+                opcode, r_pc
             ),
         };
 
@@ -694,20 +696,16 @@ impl Cpu {
                 OperandDetails::new(zero_page_addr, value, instruction.2, instruction.1)
             }
             AddressingMode::ZeroPageX => {
-                let zero_page_addr = self.read_u8(self.r_pc + 1) as u16;
-                let zero_page_value = self.read_u8(zero_page_addr);
-
-                let value = zero_page_value.wrapping_add(self.r_x);
+                let zero_page_addr = self.read_u8(self.r_pc + 1).wrapping_add(self.r_x) as u16;
+                let value = self.read_u8(zero_page_addr);
 
                 self.r_pc += 2;
 
                 OperandDetails::new(zero_page_addr, value, instruction.2, instruction.1)
             }
             AddressingMode::ZeroPageY => {
-                let zero_page_addr = self.read_u8(self.r_pc + 1) as u16;
-                let zero_page_value = self.read_u8(zero_page_addr);
-
-                let value = zero_page_value.wrapping_add(self.r_y);
+                let zero_page_addr = self.read_u8(self.r_pc + 1).wrapping_add(self.r_y) as u16;
+                let value = self.read_u8(zero_page_addr);
 
                 self.r_pc += 2;
 
@@ -795,7 +793,7 @@ impl Cpu {
                 let addr = LittleEndian::read_u16(&vec![lsb, msb]);
 
                 self.r_pc += 3;
-                //Indirect is implemented directly in JMP instruction
+
                 OperandDetails::new(addr, opcode, 0, instruction.1)
             }
             AddressingMode::IndirectX => {
@@ -916,6 +914,55 @@ impl Cpu {
     #[inline]
     fn irq_vector(cpu_mem_map: &CpuMemMap) -> u16 {
         LittleEndian::read_u16(&cpu_mem_map[0xFFFE..0x10000])
+    }
+
+    fn disassemble_instruction(
+        &self,
+        r_pc: u16,
+        instruction: &CpuInstruction,
+        operand_details: &OperandDetails,
+    ) {
+        print!("${:4X}\t{}  ", r_pc, instruction.0);
+
+        let instruction_output = match instruction.1 {
+            AddressingMode::Implied => "".to_string(),
+            AddressingMode::Accumulator => format!("A"),
+            AddressingMode::Immediate => format!("#{}", operand_details.value),
+            AddressingMode::ZeroPage => format!("${:X}", operand_details.address),
+            AddressingMode::ZeroPageX => format!("${:X}, X", operand_details.address),
+            AddressingMode::ZeroPageY => format!("${:X}, Y", operand_details.address),
+            AddressingMode::Relative => {
+                let r_pc_i32 = r_pc as i32;
+                let new_address = operand_details.address as i32;
+                let result = new_address - r_pc_i32;
+
+                format!("*{}", result)
+            }
+            AddressingMode::Absolute => format!("${:X}", operand_details.address),
+            AddressingMode::AbsoluteX => {
+                let addr = operand_details.address.wrapping_sub(self.r_x as u16);
+                format!("${:X}, X", addr)
+            }
+            AddressingMode::AbsoluteY => {
+                let addr = operand_details.address.wrapping_sub(self.r_y as u16);
+                format!("${:X}, Y", addr)
+            }
+            AddressingMode::Indirect => {
+                let msb = self.read_u8(r_pc.wrapping_add(2));
+                let lsb = self.read_u8(r_pc.wrapping_add(1));
+                format!("(${:X}{:X})", lsb, msb)
+            }
+            AddressingMode::IndirectX => {
+                let byte = self.read_u8(r_pc.wrapping_add(1));
+                format!("(${:X}, X)", byte)
+            }
+            AddressingMode::IndirectY => {
+                let byte = self.read_u8(r_pc.wrapping_add(1));
+                format!("(${:X}), Y", byte)
+            }
+        };
+
+        println!("{}", instruction_output);
     }
 
     fn generate_inst_defs(instructions: &mut Vec<CpuInstruction>) {
