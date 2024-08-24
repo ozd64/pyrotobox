@@ -165,10 +165,8 @@ impl Cpu {
             0x8A => self.txa(),
             0x9A => self.txs(),
             0x98 => self.tya(),
-            _ => panic!(
-                "FATAL: Unknown CPU instruction opcode. Read Opcode: 0x{:X} at the address 0x{:X}",
-                opcode, r_pc
-            ),
+            // If the instruction is unknown then just increase pc by 1 to switch to next one
+            _ => self.r_pc += 1,
         };
 
         (operand_details.cycles + branch_cycles) as usize
@@ -922,7 +920,7 @@ impl Cpu {
         instruction: &CpuInstruction,
         operand_details: &OperandDetails,
     ) {
-        print!("${:4X}\t{}  ", r_pc, instruction.0);
+        print!("${:4X}:\t{}  ", r_pc, instruction.0);
 
         let instruction_output = match instruction.1 {
             AddressingMode::Implied => "".to_string(),
