@@ -925,7 +925,7 @@ impl Cpu {
         let instruction_output = match instruction.1 {
             AddressingMode::Implied => "".to_string(),
             AddressingMode::Accumulator => format!("A"),
-            AddressingMode::Immediate => format!("#{}", operand_details.value),
+            AddressingMode::Immediate => format!("#{:X}", operand_details.value),
             AddressingMode::ZeroPage => format!("${:X}", operand_details.address),
             AddressingMode::ZeroPageX => format!("${:X}, X", operand_details.address),
             AddressingMode::ZeroPageY => format!("${:X}, Y", operand_details.address),
