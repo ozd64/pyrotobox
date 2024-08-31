@@ -3,6 +3,7 @@ use std::{fmt::Display, path::Path};
 
 use crate::cpu::Cpu;
 use crate::mapper::NROMMapper;
+use crate::ppu::Ppu;
 use crate::rom::{Mapper, Rom, RomError};
 
 #[derive(Debug)]
@@ -24,6 +25,7 @@ impl Error for NesError {}
 
 pub struct Nes {
     cpu: Cpu,
+    ppu: Ppu,
 }
 
 impl Nes {
@@ -35,10 +37,12 @@ impl Nes {
         };
 
         let cpu_mem_map = rom_mapper.generate_cpu_mem_map(&rom);
+        let ppu_mem_map = rom_mapper.generate_ppu_mem_map(&rom);
 
         let cpu = Cpu::new(cpu_mem_map);
+        let ppu = Ppu::new(ppu_mem_map);
 
-        Ok(Nes { cpu })
+        Ok(Nes { cpu, ppu })
     }
 
     pub fn start(&mut self) {

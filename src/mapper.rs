@@ -2,15 +2,17 @@ use crate::rom::Rom;
 
 const CPU_MEM_MAP_SIZE: usize = 0x10_000;
 const PPU_MEM_MAP_SIZE: usize = 0x4000;
+const PATTERN_TABLE_SIZE: usize = 0x2000;
 
 const TRAINER_SIZE: usize = 512;
 const NROM_PRG_ROM_SIZE: usize = 0x4000;
 
 pub type CpuMemMap = Vec<u8>;
+pub type PpuMemMap = Vec<u8>;
 
 pub trait Mapper {
     fn generate_cpu_mem_map(&self, rom: &Rom) -> CpuMemMap;
-    fn generate_ppu_mem_map(&self, rom: &Rom) -> CpuMemMap;
+    fn generate_ppu_mem_map(&self, rom: &Rom) -> PpuMemMap;
 }
 
 pub struct NROMMapper;
@@ -49,11 +51,11 @@ impl Mapper for NROMMapper {
         cpu_mem_map
     }
 
-    fn generate_ppu_mem_map(&self, rom: &Rom) -> CpuMemMap {
+    fn generate_ppu_mem_map(&self, rom: &Rom) -> PpuMemMap {
         let mut ppu_mem_map = vec![0x00; PPU_MEM_MAP_SIZE];
 
         let pattern_table_start_offset = 0x8010;
-        let pattern_table_end_offset = 0xA010;
+        let pattern_table_end_offset = pattern_table_start_offset + PATTERN_TABLE_SIZE;
 
         ppu_mem_map[0x000..0x2000].copy_from_slice(
             &rom.rom_binary()[pattern_table_start_offset..pattern_table_end_offset],
