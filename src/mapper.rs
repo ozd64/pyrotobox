@@ -1,6 +1,8 @@
 use crate::rom::Rom;
 
 const CPU_MEM_MAP_SIZE: usize = 0x10_000;
+const PPU_MEM_MAP_SIZE: usize = 0x4000;
+
 const TRAINER_SIZE: usize = 512;
 const NROM_PRG_ROM_SIZE: usize = 0x4000;
 
@@ -8,6 +10,7 @@ pub type CpuMemMap = Vec<u8>;
 
 pub trait Mapper {
     fn generate_cpu_mem_map(&self, rom: &Rom) -> CpuMemMap;
+    fn generate_ppu_mem_map(&self, rom: &Rom) -> CpuMemMap;
 }
 
 pub struct NROMMapper;
@@ -45,6 +48,19 @@ impl Mapper for NROMMapper {
 
         cpu_mem_map
     }
+
+    fn generate_ppu_mem_map(&self, rom: &Rom) -> CpuMemMap {
+        let mut ppu_mem_map = vec![0x00; PPU_MEM_MAP_SIZE];
+
+        let pattern_table_start_offset = 0x8010;
+        let pattern_table_end_offset = 0xA010;
+
+        ppu_mem_map[0x000..0x2000].copy_from_slice(
+            &rom.rom_binary()[pattern_table_start_offset..pattern_table_end_offset],
+        );
+
+        ppu_mem_map
+    }
 }
 
 #[cfg(test)]
@@ -58,9 +74,12 @@ mod tests {
 
         let nrom_mapper = NROMMapper;
         let cpu_mem_map = nrom_mapper.generate_cpu_mem_map(&rom);
+        let ppu_mem_map = nrom_mapper.generate_ppu_mem_map(&rom);
 
         assert_eq!(cpu_mem_map[0x8000], 0xCE);
         assert_eq!(cpu_mem_map[0xC000], 0xEC);
+        assert_eq!(ppu_mem_map[0x0000], 0xAA);
+        assert_eq!(ppu_mem_map[0x0010], 0xBB);
     }
 
     fn get_test_rom_bin() -> Vec<u8> {
@@ -73,6 +92,8 @@ mod tests {
         test_rom_bin[0x00..0x10].copy_from_slice(&ines_header[..0x10]);
         test_rom_bin[0x10] = 0xCE;
         test_rom_bin[0x10 + NROM_PRG_ROM_SIZE] = 0xEC;
+        test_rom_bin[0x8010] = 0xAA;
+        test_rom_bin[0x8020] = 0xBB;
 
         test_rom_bin
     }
